@@ -68,5 +68,158 @@ describe("MerkleAirdrop", function () {
     assert.equal((await airdrop.read.hasClaimed([daveAddr])) as boolean, true);
   });
 
-  // TODO: add the failure-mode tests from TASK.md.
+  it("supports odd-sized Merkle trees and emits Claimed", async function () {
+    const { token, signer, alice, bob, carol } = await deployFixture();
+
+    const oddEntries: AirdropEntry[] = [
+      { account: getAddress(alice.account.address), amount: parseEther("10") },
+      { account: getAddress(bob.account.address), amount: parseEther("20") },
+      { account: getAddress(carol.account.address), amount: parseEther("30") },
+    ];
+    const oddTree = new MerkleTree(oddEntries);
+    const airdrop = await viem.deployContract("MerkleAirdrop", [
+      token.address,
+      oddTree.root,
+      signer.account.address,
+    ]);
+    await token.write.transfer([airdrop.address, parseEther("1000")]);
+
+    const proof = oddTree.getProof(2);
+    await viem.assertions.emitWithArgs(
+      airdrop.write.claim([parseEther("30"), proof], { account: carol.account }),
+      airdrop,
+      "Claimed",
+      [getAddress(carol.account.address), parseEther("30")],
+    );
+  });
+
+  it("reverts on invalid Merkle proof, wrong amount, or wrong caller", async function () {
+    const { entries, tree, airdrop, alice, bob, dave } = await deployFixture();
+
+    const aliceProof = tree.getProof(0);
+
+    // Wrong amount for Alice's proof
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claim([parseEther("200"), aliceProof], { account: alice.account }),
+      airdrop,
+      "InvalidProof",
+    );
+
+    // Bob trying to use Alice's proof
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claim([entries[0].amount, aliceProof], { account: bob.account }),
+      airdrop,
+      "InvalidProof",
+    );
+
+    // Unlisted account with empty proof
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claim([parseEther("100"), []], { account: dave.account }),
+      airdrop,
+      "InvalidProof",
+    );
+  });
+
+  it("reverts when signature is from wrong signer, for wrong recipient, wrong amount, or wrong contract", async function () {
+    const { entries, tree, token, airdrop, deployer, signer, alice, dave, eve } = await deployFixture();
+
+    const daveAddr = getAddress(dave.account.address);
+    const eveAddr = getAddress(eve.account.address);
+    const amount = parseEther("50");
+
+    // 1. Wrong signer (alice instead of trusted signer)
+    const badSignerSig = await signAirdropClaim(alice, daveAddr, amount, airdrop.address);
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claimWithSignature([amount, badSignerSig.v, badSignerSig.r, badSignerSig.s], {
+        account: dave.account,
+      }),
+      airdrop,
+      "InvalidSignature",
+    );
+
+    // 2. Signature produced for Dave used by Eve
+    const daveSig = await signAirdropClaim(signer, daveAddr, amount, airdrop.address);
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claimWithSignature([amount, daveSig.v, daveSig.r, daveSig.s], {
+        account: eve.account,
+      }),
+      airdrop,
+      "InvalidSignature",
+    );
+
+    // 3. Wrong amount
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claimWithSignature([parseEther("500"), daveSig.v, daveSig.r, daveSig.s], {
+        account: dave.account,
+      }),
+      airdrop,
+      "InvalidSignature",
+    );
+
+    // 4. Cross-deployment replay protection: signature for airdrop1 fails on airdrop2
+    const airdrop2 = await viem.deployContract("MerkleAirdrop", [
+      token.address,
+      tree.root,
+      signer.account.address,
+    ]);
+    await token.write.transfer([airdrop2.address, parseEther("1000")], {
+      account: deployer.account,
+    });
+
+    await viem.assertions.revertWithCustomError(
+      airdrop2.write.claimWithSignature([amount, daveSig.v, daveSig.r, daveSig.s], {
+        account: dave.account,
+      }),
+      airdrop2,
+      "InvalidSignature",
+    );
+  });
+
+  it("enforces shared hasClaimed across both Merkle and signature claim paths", async function () {
+    const { entries, tree, airdrop, signer, alice, bob } = await deployFixture();
+
+    // Case A: Alice claims via Merkle first, then cannot claim via valid signature
+    const aliceProof = tree.getProof(0);
+    await airdrop.write.claim([entries[0].amount, aliceProof], { account: alice.account });
+
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claim([entries[0].amount, aliceProof], { account: alice.account }),
+      airdrop,
+      "AlreadyClaimed",
+    );
+
+    const aliceSig = await signAirdropClaim(
+      signer,
+      getAddress(alice.account.address),
+      entries[0].amount,
+      airdrop.address,
+    );
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claimWithSignature(
+        [entries[0].amount, aliceSig.v, aliceSig.r, aliceSig.s],
+        { account: alice.account },
+      ),
+      airdrop,
+      "AlreadyClaimed",
+    );
+
+    // Case B: Bob claims via signature first, then cannot claim via valid Merkle proof
+    const bobSig = await signAirdropClaim(
+      signer,
+      getAddress(bob.account.address),
+      entries[1].amount,
+      airdrop.address,
+    );
+    await airdrop.write.claimWithSignature(
+      [entries[1].amount, bobSig.v, bobSig.r, bobSig.s],
+      { account: bob.account },
+    );
+
+    const bobProof = tree.getProof(1);
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claim([entries[1].amount, bobProof], { account: bob.account }),
+      airdrop,
+      "AlreadyClaimed",
+    );
+  });
 });

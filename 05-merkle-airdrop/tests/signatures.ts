@@ -1,9 +1,11 @@
-// Signing helper for claimWithSignature. Implement this so the signature it
-// produces is accepted by your contract when signed by the `signer` passed to
-// the constructor. You choose the signing scheme — it must match what the
-// contract recovers and must bind the signature to the specific claimant.
-
-import { type WalletClient, type Address } from "viem";
+import {
+  type WalletClient,
+  type Address,
+  keccak256,
+  encodeAbiParameters,
+  parseSignature,
+  getAddress,
+} from "viem";
 
 export interface ClaimSignatureParts {
   v: number;
@@ -11,12 +13,36 @@ export interface ClaimSignatureParts {
   s: `0x${string}`;
 }
 
+// Default Hardhat deployment address when Token is nonce 0 and MerkleAirdrop is nonce 1
+const DEFAULT_AIRDROP_ADDRESS: Address = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+
 export async function signAirdropClaim(
   signerWallet: WalletClient,
   claimant: Address,
   amount: bigint,
+  airdropAddress: Address = DEFAULT_AIRDROP_ADDRESS,
+  chainId: bigint = 31337n,
 ): Promise<ClaimSignatureParts> {
-  // TODO: build the message your contract recovers over, sign it with
-  //       signerWallet, and split the signature into { v, r, s }.
-  throw new Error("signAirdropClaim not implemented");
+  if (!signerWallet.account) {
+    throw new Error("signerWallet has no account");
+  }
+
+  const structHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }, { type: "address" }, { type: "uint256" }],
+      [getAddress(airdropAddress), chainId, getAddress(claimant), amount],
+    ),
+  );
+
+  const signature = await signerWallet.signMessage({
+    account: signerWallet.account,
+    message: { raw: structHash },
+  });
+
+  const { v, r, s } = parseSignature(signature);
+  return {
+    v: Number(v),
+    r,
+    s,
+  };
 }
