@@ -69,7 +69,7 @@ describe("MerkleAirdrop", function () {
   });
 
   it("supports odd-sized Merkle trees and emits Claimed", async function () {
-    const { token, signer, alice, bob, carol } = await deployFixture();
+    const { signer, alice, bob, carol } = await deployFixture();
 
     const oddEntries: AirdropEntry[] = [
       { account: getAddress(alice.account.address), amount: parseEther("10") },
@@ -77,17 +77,19 @@ describe("MerkleAirdrop", function () {
       { account: getAddress(carol.account.address), amount: parseEther("30") },
     ];
     const oddTree = new MerkleTree(oddEntries);
-    const airdrop = await viem.deployContract("MerkleAirdrop", [
-      token.address,
+
+    const oddToken = await viem.deployContract("Token", ["Odd Token", "ODD", parseEther("1000")]);
+    const oddAirdrop = await viem.deployContract("MerkleAirdrop", [
+      oddToken.address,
       oddTree.root,
       signer.account.address,
     ]);
-    await token.write.transfer([airdrop.address, parseEther("1000")]);
+    await oddToken.write.transfer([oddAirdrop.address, parseEther("1000")]);
 
     const proof = oddTree.getProof(2);
     await viem.assertions.emitWithArgs(
-      airdrop.write.claim([parseEther("30"), proof], { account: carol.account }),
-      airdrop,
+      oddAirdrop.write.claim([parseEther("30"), proof], { account: carol.account }),
+      oddAirdrop,
       "Claimed",
       [getAddress(carol.account.address), parseEther("30")],
     );
@@ -121,10 +123,9 @@ describe("MerkleAirdrop", function () {
   });
 
   it("reverts when signature is from wrong signer, for wrong recipient, wrong amount, or wrong contract", async function () {
-    const { entries, tree, token, airdrop, deployer, signer, alice, dave, eve } = await deployFixture();
+    const { tree, airdrop, signer, alice, dave, eve } = await deployFixture();
 
     const daveAddr = getAddress(dave.account.address);
-    const eveAddr = getAddress(eve.account.address);
     const amount = parseEther("50");
 
     // 1. Wrong signer (alice instead of trusted signer)
@@ -157,14 +158,13 @@ describe("MerkleAirdrop", function () {
     );
 
     // 4. Cross-deployment replay protection: signature for airdrop1 fails on airdrop2
+    const token2 = await viem.deployContract("Token", ["Token 2", "TK2", parseEther("1000")]);
     const airdrop2 = await viem.deployContract("MerkleAirdrop", [
-      token.address,
+      token2.address,
       tree.root,
       signer.account.address,
     ]);
-    await token.write.transfer([airdrop2.address, parseEther("1000")], {
-      account: deployer.account,
-    });
+    await token2.write.transfer([airdrop2.address, parseEther("1000")]);
 
     await viem.assertions.revertWithCustomError(
       airdrop2.write.claimWithSignature([amount, daveSig.v, daveSig.r, daveSig.s], {

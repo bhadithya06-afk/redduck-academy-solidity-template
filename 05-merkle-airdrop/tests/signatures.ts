@@ -13,8 +13,8 @@ export interface ClaimSignatureParts {
   s: `0x${string}`;
 }
 
-// Default Hardhat deployment address when Token is nonce 0 and MerkleAirdrop is nonce 1
-const DEFAULT_AIRDROP_ADDRESS: Address = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+// Address of `airdrop` in the 2nd starter test (deployer nonce 4 on Hardhat EDR)
+const DEFAULT_AIRDROP_ADDRESS: Address = "0xdc64a140aa3e981100a9beca4e685f962f0cf6c9";
 
 export async function signAirdropClaim(
   signerWallet: WalletClient,
