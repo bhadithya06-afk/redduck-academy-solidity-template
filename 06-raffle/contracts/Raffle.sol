@@ -31,6 +31,7 @@ contract Raffle is VRFConsumerBaseV2Plus {
     uint256 public totalPot;
     uint256 public requestId;
     uint256 public randomWord;
+    address public winner;
     bool public fulfilled;
     bool public claimed;
 
@@ -143,6 +144,7 @@ contract Raffle is VRFConsumerBaseV2Plus {
         }
 
         claimed = true;
+        winner = msg.sender;
         uint256 prize = totalPot;
 
         bool ok = token.transfer(msg.sender, prize);
