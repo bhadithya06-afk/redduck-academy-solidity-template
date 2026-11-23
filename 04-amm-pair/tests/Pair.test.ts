@@ -124,10 +124,22 @@ describe("Pair", function () {
       assert.equal(await pair.read.totalSupply(), parseEther("100"));
     });
 
-    it("mints proportional LP tokens on subsequent deposits and uses the smaller ratio when out of balance", async function () {
+    it("mints exact proportional LP tokens on a balanced subsequent deposit", async function () {
       const { pair, alice, bob } = await networkHelpers.loadFixture(deployPairFixture);
 
-      // Initial pool: 100 token0, 200 token1 -> sqrt(20000e36) = 141.421356...e18
+      await pair.write.addLiquidity([parseEther("100"), parseEther("200")], { account: alice.account });
+      const supplyAfterFirst = await pair.read.totalSupply();
+
+      // Bob deposits in the exact 1:2 pool ratio (50 token0, 100 token1 -> 50% of supply)
+      await pair.write.addLiquidity([parseEther("50"), parseEther("100")], { account: bob.account });
+      assert.equal(await pair.read.balanceOf([bob.account.address]), supplyAfterFirst / 2n);
+      assert.equal(await pair.read.reserve0(), parseEther("150"));
+      assert.equal(await pair.read.reserve1(), parseEther("300"));
+    });
+
+    it("uses the smaller ratio when a subsequent deposit is out of balance", async function () {
+      const { pair, alice, bob } = await networkHelpers.loadFixture(deployPairFixture);
+
       await pair.write.addLiquidity([parseEther("100"), parseEther("200")], { account: alice.account });
       const supplyAfterFirst = await pair.read.totalSupply();
 

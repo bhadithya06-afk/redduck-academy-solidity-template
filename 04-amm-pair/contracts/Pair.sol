@@ -27,12 +27,17 @@ contract Pair is ERC20 {
     event LiquidityRemoved(address indexed provider, uint256 amount0, uint256 amount1, uint256 liquidity);
     event Swapped(address indexed sender, address indexed tokenIn, uint256 amountIn, uint256 amountOut);
 
-    constructor(address _token0, address _token1) ERC20("Pair LP", "PAIR-LP") {
-        if (_token0 == address(0) || _token1 == address(0) || _token0 == _token1) {
+    constructor(IERC20 _token0, IERC20 _token1) ERC20("Pair LP", "PAIR-LP") {
+        if (address(_token0) == address(0) || address(_token1) == address(0) || _token0 == _token1) {
             revert InvalidToken();
         }
-        token0 = IERC20(_token0);
-        token1 = IERC20(_token1);
+        token0 = _token0;
+        token1 = _token1;
+    }
+
+    function _syncReserves() private {
+        reserve0 = token0.balanceOf(address(this));
+        reserve1 = token1.balanceOf(address(this));
     }
 
     function getAmountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut) public pure returns (uint256) {
@@ -68,9 +73,7 @@ contract Pair is ERC20 {
         }
 
         _mint(msg.sender, liquidity);
-
-        reserve0 += amount0;
-        reserve1 += amount1;
+        _syncReserves();
 
         emit LiquidityAdded(msg.sender, amount0, amount1, liquidity);
     }
@@ -88,11 +91,9 @@ contract Pair is ERC20 {
 
         _burn(msg.sender, liquidity);
 
-        reserve0 -= amount0;
-        reserve1 -= amount1;
-
         token0.safeTransfer(msg.sender, amount0);
         token1.safeTransfer(msg.sender, amount1);
+        _syncReserves();
 
         emit LiquidityRemoved(msg.sender, amount0, amount1, liquidity);
     }
@@ -110,14 +111,7 @@ contract Pair is ERC20 {
 
         inToken.safeTransferFrom(msg.sender, address(this), amountIn);
         outToken.safeTransfer(msg.sender, amountOut);
-
-        if (isToken0) {
-            reserve0 = resIn + amountIn;
-            reserve1 = resOut - amountOut;
-        } else {
-            reserve1 = resIn + amountIn;
-            reserve0 = resOut - amountOut;
-        }
+        _syncReserves();
 
         emit Swapped(msg.sender, tokenIn, amountIn, amountOut);
     }
