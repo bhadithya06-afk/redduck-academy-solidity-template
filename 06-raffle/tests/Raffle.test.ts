@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { network } from "hardhat";
-import { parseEther } from "viem";
+import { getAddress, parseEther } from "viem";
 
 const { viem, networkHelpers } = await network.connect();
 
@@ -74,13 +74,8 @@ describe("Raffle", function () {
   it("locks each deposit's USD weight at entry time even when the token price changes later", async function () {
     const { btc, feed, coord, raffle, drawTime, alice, bob } = await deployFixture();
 
-    // Alice deposits 2 BTC when BTC = $60,000 -> weight = $120,000
     await raffle.write.deposit([parseEther("2")], { account: alice.account });
-
-    // Price doubles to $120,000 before Bob enters
     await feed.write.updateAnswer([120_000n * 10n ** 8n]);
-
-    // Bob deposits 1 BTC when BTC = $120,000 -> weight = $120,000 (50/50 split with Alice)
     await raffle.write.deposit([parseEther("1")], { account: bob.account });
 
     const entry0 = await raffle.read.entries([0n]);
@@ -92,7 +87,6 @@ describe("Raffle", function () {
     assert.equal(bobWeight, parseEther("120000"));
     assert.equal(await raffle.read.totalWeight(), parseEther("240000"));
 
-    // Exact upper boundary of Entry 0: ticket = aliceWeight - 1 picks Alice (entry 0)
     await networkHelpers.time.increaseTo(drawTime);
     await raffle.write.drawWinner();
     const reqId = (await raffle.read.requestId()) as bigint;
@@ -114,6 +108,7 @@ describe("Raffle", function () {
     await raffle.write.claim([0n], { account: alice.account });
     const aliceAfter = await btc.read.balanceOf([alice.account.address]);
     assert.equal(aliceAfter - aliceBefore, parseEther("3"));
+    assert.equal(await raffle.read.winner(), getAddress(alice.account.address));
   });
 
   it("picks the second entry at the exact startWeight boundary", async function () {
@@ -129,7 +124,6 @@ describe("Raffle", function () {
     await raffle.write.drawWinner();
     const reqId = (await raffle.read.requestId()) as bigint;
 
-    // randomWord = aliceEnd -> winningTicket = aliceEnd -> falls into entry 1 [aliceEnd, totalWeight)
     await coord.write.fulfillRandomWordsWithOverride([reqId, raffle.address, [aliceEnd]]);
 
     await viem.assertions.revertWithCustomError(
@@ -144,7 +138,7 @@ describe("Raffle", function () {
   });
 
   it("rejects zero deposits, deposits after drawTime, and non-positive or stale prices", async function () {
-    const { feed, raffle, drawTime, alice } = await deployFixture();
+    const { feed, raffle, alice } = await deployFixture();
 
     await viem.assertions.revertWithCustomError(
       raffle.write.deposit([0n], { account: alice.account }),
@@ -178,6 +172,7 @@ describe("Raffle", function () {
       CALLBACK_GAS,
     ]);
 
+    // Advancing 3601s makes the price stale for staleRaffle and also passes drawTime for raffle
     await networkHelpers.time.increase(3601);
     await viem.assertions.revertWithCustomError(
       staleRaffle.write.deposit([parseEther("1")], { account: alice.account }),
@@ -185,7 +180,6 @@ describe("Raffle", function () {
       "StalePrice",
     );
 
-    await networkHelpers.time.increaseTo(drawTime);
     await viem.assertions.revertWithCustomError(
       raffle.write.deposit([parseEther("1")], { account: alice.account }),
       raffle,
