@@ -174,7 +174,7 @@ describe("Pair", function () {
   });
 
   describe("removeLiquidity", function () {
-    it("burns LP tokens and returns proportional reserves including accrued swap fees", async function () {
+    it("burns LP tokens, decreases totalSupply, and returns proportional reserves including accrued swap fees", async function () {
       const { token0, token1, pair, alice, bob } = await networkHelpers.loadFixture(deployPairFixture);
 
       await pair.write.addLiquidity([parseEther("1000"), parseEther("1000")], { account: alice.account });
@@ -201,6 +201,8 @@ describe("Pair", function () {
       );
 
       assert.equal(await pair.read.balanceOf([alice.account.address]), 0n);
+      assert.equal(await pair.read.totalSupply(), supplyBefore - aliceLp);
+      assert.equal(await pair.read.totalSupply(), await pair.read.MINIMUM_LIQUIDITY());
       assert.equal(await token0.read.balanceOf([alice.account.address]), bal0Before + expected0);
       assert.equal(await token1.read.balanceOf([alice.account.address]), bal1Before + expected1);
       // Because of the swap fee, Alice withdraws more value in k than she deposited (minus DEAD lock)
