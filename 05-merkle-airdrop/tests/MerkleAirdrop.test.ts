@@ -68,6 +68,28 @@ describe("MerkleAirdrop", function () {
     assert.equal((await airdrop.read.hasClaimed([daveAddr])) as boolean, true);
   });
 
+  it("emits Claimed on claimWithSignature and rejects a second signature claim", async function () {
+    const { airdrop, signer, dave } = await deployFixture();
+
+    const daveAddr = getAddress(dave.account.address);
+    const amount = parseEther("75");
+
+    const { v, r, s } = await signAirdropClaim(signer, daveAddr, amount, airdrop.address);
+
+    await viem.assertions.emitWithArgs(
+      airdrop.write.claimWithSignature([amount, v, r, s], { account: dave.account }),
+      airdrop,
+      "Claimed",
+      [daveAddr, amount],
+    );
+
+    await viem.assertions.revertWithCustomError(
+      airdrop.write.claimWithSignature([amount, v, r, s], { account: dave.account }),
+      airdrop,
+      "AlreadyClaimed",
+    );
+  });
+
   it("supports odd-sized Merkle trees and emits Claimed", async function () {
     const { signer, alice, bob, carol } = await deployFixture();
 
@@ -100,21 +122,18 @@ describe("MerkleAirdrop", function () {
 
     const aliceProof = tree.getProof(0);
 
-    // Wrong amount for Alice's proof
     await viem.assertions.revertWithCustomError(
       airdrop.write.claim([parseEther("200"), aliceProof], { account: alice.account }),
       airdrop,
       "InvalidProof",
     );
 
-    // Bob trying to use Alice's proof
     await viem.assertions.revertWithCustomError(
       airdrop.write.claim([entries[0].amount, aliceProof], { account: bob.account }),
       airdrop,
       "InvalidProof",
     );
 
-    // Unlisted account with empty proof
     await viem.assertions.revertWithCustomError(
       airdrop.write.claim([parseEther("100"), []], { account: dave.account }),
       airdrop,
@@ -128,7 +147,6 @@ describe("MerkleAirdrop", function () {
     const daveAddr = getAddress(dave.account.address);
     const amount = parseEther("50");
 
-    // 1. Wrong signer (alice instead of trusted signer)
     const badSignerSig = await signAirdropClaim(alice, daveAddr, amount, airdrop.address);
     await viem.assertions.revertWithCustomError(
       airdrop.write.claimWithSignature([amount, badSignerSig.v, badSignerSig.r, badSignerSig.s], {
@@ -138,7 +156,6 @@ describe("MerkleAirdrop", function () {
       "InvalidSignature",
     );
 
-    // 2. Signature produced for Dave used by Eve
     const daveSig = await signAirdropClaim(signer, daveAddr, amount, airdrop.address);
     await viem.assertions.revertWithCustomError(
       airdrop.write.claimWithSignature([amount, daveSig.v, daveSig.r, daveSig.s], {
@@ -148,7 +165,6 @@ describe("MerkleAirdrop", function () {
       "InvalidSignature",
     );
 
-    // 3. Wrong amount
     await viem.assertions.revertWithCustomError(
       airdrop.write.claimWithSignature([parseEther("500"), daveSig.v, daveSig.r, daveSig.s], {
         account: dave.account,
@@ -157,7 +173,6 @@ describe("MerkleAirdrop", function () {
       "InvalidSignature",
     );
 
-    // 4. Cross-deployment replay protection: signature for airdrop1 fails on airdrop2
     const token2 = await viem.deployContract("Token", ["Token 2", "TK2", parseEther("1000")]);
     const airdrop2 = await viem.deployContract("MerkleAirdrop", [
       token2.address,
@@ -178,7 +193,6 @@ describe("MerkleAirdrop", function () {
   it("enforces shared hasClaimed across both Merkle and signature claim paths", async function () {
     const { entries, tree, airdrop, signer, alice, bob } = await deployFixture();
 
-    // Case A: Alice claims via Merkle first, then cannot claim via valid signature
     const aliceProof = tree.getProof(0);
     await airdrop.write.claim([entries[0].amount, aliceProof], { account: alice.account });
 
@@ -203,7 +217,6 @@ describe("MerkleAirdrop", function () {
       "AlreadyClaimed",
     );
 
-    // Case B: Bob claims via signature first, then cannot claim via valid Merkle proof
     const bobSig = await signAirdropClaim(
       signer,
       getAddress(bob.account.address),
